@@ -14,3 +14,158 @@ import * as zod from "zod";
 export const HealthCheckResponse = zod.object({
   status: zod.string(),
 });
+
+/**
+ * Returns all events ordered by status and position
+ * @summary List events
+ */
+export const ListEventsResponseItem = zod.object({
+  id: zod.number(),
+  title: zod.string(),
+  description: zod.string().nullable(),
+  eventDate: zod.coerce.date().nullable(),
+  location: zod.string().nullable(),
+  submittedBy: zod.string().nullable(),
+  assignee: zod.string().nullable(),
+  notes: zod.string().nullable(),
+  status: zod.enum(["new", "in_progress", "shot", "published"]),
+  position: zod.number(),
+  createdAt: zod.coerce.date(),
+  updatedAt: zod.coerce.date(),
+});
+export const ListEventsResponse = zod.array(ListEventsResponseItem);
+
+/**
+ * @summary Create event
+ */
+
+export const CreateEventBody = zod.object({
+  title: zod.string().min(1),
+  description: zod.string().nullish(),
+  eventDate: zod.coerce.date().nullish(),
+  location: zod.string().nullish(),
+  submittedBy: zod.string().nullish(),
+  assignee: zod.string().nullish(),
+  notes: zod.string().nullish(),
+  status: zod.enum(["new", "in_progress", "shot", "published"]).optional(),
+});
+
+/**
+ * Returns aggregated counts and upcoming activity
+ * @summary Get dashboard stats
+ */
+export const GetEventStatsResponse = zod.object({
+  total: zod.number(),
+  byStatus: zod.array(
+    zod.object({
+      status: zod.enum(["new", "in_progress", "shot", "published"]),
+      count: zod.number(),
+    }),
+  ),
+  upcomingCount: zod.number(),
+  overdueCount: zod.number(),
+});
+
+/**
+ * Returns events with eventDate in the next 14 days, soonest first
+ * @summary Upcoming events
+ */
+export const GetUpcomingEventsResponseItem = zod.object({
+  id: zod.number(),
+  title: zod.string(),
+  description: zod.string().nullable(),
+  eventDate: zod.coerce.date().nullable(),
+  location: zod.string().nullable(),
+  submittedBy: zod.string().nullable(),
+  assignee: zod.string().nullable(),
+  notes: zod.string().nullable(),
+  status: zod.enum(["new", "in_progress", "shot", "published"]),
+  position: zod.number(),
+  createdAt: zod.coerce.date(),
+  updatedAt: zod.coerce.date(),
+});
+export const GetUpcomingEventsResponse = zod.array(
+  GetUpcomingEventsResponseItem,
+);
+
+export const GetEventParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const GetEventResponse = zod.object({
+  id: zod.number(),
+  title: zod.string(),
+  description: zod.string().nullable(),
+  eventDate: zod.coerce.date().nullable(),
+  location: zod.string().nullable(),
+  submittedBy: zod.string().nullable(),
+  assignee: zod.string().nullable(),
+  notes: zod.string().nullable(),
+  status: zod.enum(["new", "in_progress", "shot", "published"]),
+  position: zod.number(),
+  createdAt: zod.coerce.date(),
+  updatedAt: zod.coerce.date(),
+});
+
+export const UpdateEventParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const UpdateEventBody = zod.object({
+  title: zod.string().min(1).optional(),
+  description: zod.string().nullish(),
+  eventDate: zod.coerce.date().nullish(),
+  location: zod.string().nullish(),
+  assignee: zod.string().nullish(),
+  notes: zod.string().nullish(),
+  status: zod.enum(["new", "in_progress", "shot", "published"]).optional(),
+});
+
+export const UpdateEventResponse = zod.object({
+  id: zod.number(),
+  title: zod.string(),
+  description: zod.string().nullable(),
+  eventDate: zod.coerce.date().nullable(),
+  location: zod.string().nullable(),
+  submittedBy: zod.string().nullable(),
+  assignee: zod.string().nullable(),
+  notes: zod.string().nullable(),
+  status: zod.enum(["new", "in_progress", "shot", "published"]),
+  position: zod.number(),
+  createdAt: zod.coerce.date(),
+  updatedAt: zod.coerce.date(),
+});
+
+export const DeleteEventParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+/**
+ * @summary Move event between columns or reorder
+ */
+export const MoveEventParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const moveEventBodyPositionMin = 0;
+
+export const MoveEventBody = zod.object({
+  status: zod.enum(["new", "in_progress", "shot", "published"]),
+  position: zod.number().min(moveEventBodyPositionMin),
+});
+
+export const MoveEventResponseItem = zod.object({
+  id: zod.number(),
+  title: zod.string(),
+  description: zod.string().nullable(),
+  eventDate: zod.coerce.date().nullable(),
+  location: zod.string().nullable(),
+  submittedBy: zod.string().nullable(),
+  assignee: zod.string().nullable(),
+  notes: zod.string().nullable(),
+  status: zod.enum(["new", "in_progress", "shot", "published"]),
+  position: zod.number(),
+  createdAt: zod.coerce.date(),
+  updatedAt: zod.coerce.date(),
+});
+export const MoveEventResponse = zod.array(MoveEventResponseItem);

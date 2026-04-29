@@ -8,3 +8,89 @@
 export interface HealthStatus {
   status: string;
 }
+
+export interface ErrorResponse {
+  error: string;
+}
+
+export type EventStatus = (typeof EventStatus)[keyof typeof EventStatus];
+
+export const EventStatus = {
+  new: "new",
+  in_progress: "in_progress",
+  shot: "shot",
+  published: "published",
+} as const;
+
+export interface Event {
+  id: number;
+  title: string;
+  /** @nullable */
+  description: string | null;
+  /** @nullable */
+  eventDate: string | null;
+  /** @nullable */
+  location: string | null;
+  /** @nullable */
+  submittedBy: string | null;
+  /** @nullable */
+  assignee: string | null;
+  /** @nullable */
+  notes: string | null;
+  status: EventStatus;
+  position: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateEventInput {
+  /** @minLength 1 */
+  title: string;
+  /** @nullable */
+  description?: string | null;
+  /** @nullable */
+  eventDate?: string | null;
+  /** @nullable */
+  location?: string | null;
+  /** @nullable */
+  submittedBy?: string | null;
+  /** @nullable */
+  assignee?: string | null;
+  /** @nullable */
+  notes?: string | null;
+  status?: EventStatus;
+}
+
+export interface UpdateEventInput {
+  /** @minLength 1 */
+  title?: string;
+  /** @nullable */
+  description?: string | null;
+  /** @nullable */
+  eventDate?: string | null;
+  /** @nullable */
+  location?: string | null;
+  /** @nullable */
+  assignee?: string | null;
+  /** @nullable */
+  notes?: string | null;
+  status?: EventStatus;
+}
+
+export interface MoveEventInput {
+  status: EventStatus;
+  /** @minimum 0 */
+  position: number;
+}
+
+export interface StatusCount {
+  status: EventStatus;
+  count: number;
+}
+
+export interface EventStats {
+  total: number;
+  byStatus: StatusCount[];
+  upcomingCount: number;
+  overdueCount: number;
+}

@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "Медиа-доска"
+version = "1.0.0"
+id = "artifacts/media-board"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 21750
+
+[services.development]
+run = "pnpm --filter @workspace/media-board run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/media-board", "run", "build" ]
+publicDir = "artifacts/media-board/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "21750"
+BASE_PATH = "/"

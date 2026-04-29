@@ -10,6 +10,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: events
+    description: Media events to film
 paths:
   /healthz:
     get:
@@ -24,6 +26,167 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /events:
+    get:
+      operationId: listEvents
+      tags: [events]
+      summary: List events
+      description: Returns all events ordered by status and position
+      responses:
+        "200":
+          description: List of events
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Event"
+    post:
+      operationId: createEvent
+      tags: [events]
+      summary: Create event
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateEventInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Event"
+
+  /events/stats:
+    get:
+      operationId: getEventStats
+      tags: [events]
+      summary: Get dashboard stats
+      description: Returns aggregated counts and upcoming activity
+      responses:
+        "200":
+          description: Stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EventStats"
+
+  /events/upcoming:
+    get:
+      operationId: getUpcomingEvents
+      tags: [events]
+      summary: Upcoming events
+      description: Returns events with eventDate in the next 14 days, soonest first
+      responses:
+        "200":
+          description: Upcoming events
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Event"
+
+  /events/{id}:
+    get:
+      operationId: getEvent
+      tags: [events]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Event
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Event"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    patch:
+      operationId: updateEvent
+      tags: [events]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateEventInput"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Event"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteEvent
+      tags: [events]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /events/{id}/move:
+    post:
+      operationId: moveEvent
+      tags: [events]
+      summary: Move event between columns or reorder
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MoveEventInput"
+      responses:
+        "200":
+          description: Moved, returns full updated list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Event"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +197,144 @@ components:
       required:
         - status
 
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error
+
+    EventStatus:
+      type: string
+      enum: [new, in_progress, shot, published]
+
+    Event:
+      type: object
+      properties:
+        id:
+          type: integer
+        title:
+          type: string
+        description:
+          type: ["string", "null"]
+        eventDate:
+          type: ["string", "null"]
+          format: date-time
+        location:
+          type: ["string", "null"]
+        submittedBy:
+          type: ["string", "null"]
+        assignee:
+          type: ["string", "null"]
+        notes:
+          type: ["string", "null"]
+        status:
+          $ref: "#/components/schemas/EventStatus"
+        position:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - title
+        - description
+        - eventDate
+        - location
+        - submittedBy
+        - assignee
+        - notes
+        - status
+        - position
+        - createdAt
+        - updatedAt
+
+    CreateEventInput:
+      type: object
+      properties:
+        title:
+          type: string
+          minLength: 1
+        description:
+          type: ["string", "null"]
+        eventDate:
+          type: ["string", "null"]
+          format: date-time
+        location:
+          type: ["string", "null"]
+        submittedBy:
+          type: ["string", "null"]
+        assignee:
+          type: ["string", "null"]
+        notes:
+          type: ["string", "null"]
+        status:
+          $ref: "#/components/schemas/EventStatus"
+      required:
+        - title
+
+    UpdateEventInput:
+      type: object
+      properties:
+        title:
+          type: string
+          minLength: 1
+        description:
+          type: ["string", "null"]
+        eventDate:
+          type: ["string", "null"]
+          format: date-time
+        location:
+          type: ["string", "null"]
+        assignee:
+          type: ["string", "null"]
+        notes:
+          type: ["string", "null"]
+        status:
+          $ref: "#/components/schemas/EventStatus"
+
+    MoveEventInput:
+      type: object
+      properties:
+        status:
+          $ref: "#/components/schemas/EventStatus"
+        position:
+          type: integer
+          minimum: 0
+      required:
+        - status
+        - position
+
+    StatusCount:
+      type: object
+      properties:
+        status:
+          $ref: "#/components/schemas/EventStatus"
+        count:
+          type: integer
+      required:
+        - status
+        - count
+
+    EventStats:
+      type: object
+      properties:
+        total:
+          type: integer
+        byStatus:
+          type: array
+          items:
+            $ref: "#/components/schemas/StatusCount"
+        upcomingCount:
+          type: integer
+        overdueCount:
+          type: integer
+      required:
+        - total
+        - byStatus
+        - upcomingCount
+        - overdueCount

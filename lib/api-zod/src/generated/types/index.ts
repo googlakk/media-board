@@ -6,4 +6,12 @@
  * OpenAPI spec version: 0.1.0
  */
 
+export * from "./createEventInput";
+export * from "./errorResponse";
+export * from "./event";
+export * from "./eventStats";
+export * from "./eventStatus";
 export * from "./healthStatus";
+export * from "./moveEventInput";
+export * from "./statusCount";
+export * from "./updateEventInput";
