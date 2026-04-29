@@ -19,6 +19,8 @@ export interface Event {
   /** @nullable */
   submittedBy: string | null;
   /** @nullable */
+  contactInfo: string | null;
+  /** @nullable */
   assignee: string | null;
   /** @nullable */
   notes: string | null;

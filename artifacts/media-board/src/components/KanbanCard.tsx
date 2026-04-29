@@ -78,25 +78,27 @@ export function KanbanCard({ event, onClick, isOverlay }: KanbanCardProps) {
           )}
         </div>
 
-        {(event.assignee || event.submittedBy) && (
-          <div className="flex items-center justify-between mt-2 pt-2 border-t border-border/50">
-            <div className="flex flex-col gap-1">
+        {(event.assignee || event.contactInfo || event.submittedBy) && (
+          <div className="flex items-center justify-between mt-2 pt-2 border-t border-border/50 gap-2">
+            <div className="flex flex-col gap-1 min-w-0">
               {event.assignee && (
                 <div className="flex items-center gap-1.5 text-[11px] font-medium text-primary">
                   <User size={12} className="shrink-0" />
-                  <span className="truncate max-w-[120px]">{event.assignee}</span>
+                  <span className="truncate max-w-[160px]">{event.assignee}</span>
                 </div>
               )}
-              {!event.assignee && event.submittedBy && (
+              {(event.contactInfo || event.submittedBy) && (
                 <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
                   <MessageSquare size={12} className="shrink-0" />
-                  <span className="truncate max-w-[120px]">от {event.submittedBy}</span>
+                  <span className="truncate max-w-[180px]">
+                    от {event.contactInfo ?? event.submittedBy}
+                  </span>
                 </div>
               )}
             </div>
-            
+
             {event.notes && (
-              <Badge variant="secondary" className="px-1.5 py-0 text-[10px] h-5">
+              <Badge variant="secondary" className="px-1.5 py-0 text-[10px] h-5 shrink-0">
                 Заметки
               </Badge>
             )}

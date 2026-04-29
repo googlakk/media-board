@@ -2,13 +2,15 @@ import TelegramBot from "node-telegram-bot-api";
 import { db, eventsTable } from "@workspace/db";
 import { eq, sql } from "drizzle-orm";
 import { logger } from "./logger";
+import { broadcast } from "./ws";
 
 type SessionStep =
   | "idle"
   | "awaitingTitle"
   | "awaitingDate"
   | "awaitingLocation"
-  | "awaitingDescription";
+  | "awaitingDescription"
+  | "awaitingContact";
 
 interface Session {
   step: SessionStep;
@@ -16,6 +18,7 @@ interface Session {
   eventDate?: Date | null;
   location?: string | null;
   description?: string | null;
+  contactInfo?: string | null;
   submittedBy: string;
 }
 
@@ -178,13 +181,33 @@ export function startTelegramBot(): void {
         session.step = "awaitingDescription";
         bot.sendMessage(
           chatId,
-          "Шаг 4/4. Кратко опишите мероприятие — что снимать, кто участвует, особые пожелания.\nИли напишите \"пропустить\".",
+          "Шаг 4/5. Кратко опишите мероприятие — что снимать, кто участвует, особые пожелания.\nИли напишите \"пропустить\".",
         );
         return;
       }
 
       if (session.step === "awaitingDescription") {
         session.description = emptyOrNull(text);
+        session.step = "awaitingContact";
+        bot.sendMessage(
+          chatId,
+          "Шаг 5/5. От кого заявка? Напишите ваше имя и как с вами связаться.\n\n" +
+            "Например: \"Анна Петровна, учитель музыки, тел. +7 999 123-45-67\" или \"Иван Сидоров, 9А класс, @ivan_telegram\".\n\n" +
+            "Это нужно медиа-отделу, чтобы уточнить детали.",
+        );
+        return;
+      }
+
+      if (session.step === "awaitingContact") {
+        const contact = text.trim();
+        if (!contact || contact.length < 2) {
+          bot.sendMessage(
+            chatId,
+            "Пожалуйста, напишите ваше имя и контакт — без этого медиа-отдел не сможет связаться. Попробуйте ещё раз.",
+          );
+          return;
+        }
+        session.contactInfo = contact;
 
         if (!session.title) {
           sessions.delete(chatId);
@@ -201,12 +224,20 @@ export function startTelegramBot(): void {
             eventDate: session.eventDate ?? null,
             location: session.location ?? null,
             submittedBy: session.submittedBy,
+            contactInfo: session.contactInfo,
             status: "new",
             position,
           })
           .returning();
 
         sessions.delete(chatId);
+
+        broadcast({
+          type: "event_created",
+          eventId: created.id,
+          title: created.title,
+          submittedBy: created.submittedBy,
+        });
 
         const dateStr = created.eventDate
           ? created.eventDate.toLocaleString("ru-RU", {
@@ -223,8 +254,9 @@ export function startTelegramBot(): void {
           `Готово! Заявка #${created.id} добавлена в медиа-доску.\n\n` +
             `Название: ${created.title}\n` +
             `Когда: ${dateStr}\n` +
-            `Где: ${created.location ?? "не указано"}\n\n` +
-            `Медиа-отдел увидит её в колонке «Новые». Чтобы подать ещё — /new`,
+            `Где: ${created.location ?? "не указано"}\n` +
+            `От: ${created.contactInfo}\n\n` +
+            `Медиа-отдел увидит её в колонке «Новые» сразу же. Чтобы подать ещё — /new`,
         );
 
         logger.info({ eventId: created.id, chatId }, "New event from Telegram");

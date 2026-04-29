@@ -13,10 +13,12 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useLiveEvents } from "@/hooks/useLiveEvents";
 
 export function Layout({ children, onAddClick }: { children: ReactNode, onAddClick: () => void }) {
   const [location] = useLocation();
   const { data: stats } = useGetEventStats();
+  useLiveEvents();
 
   return (
     <div className="min-h-screen bg-background flex flex-col">

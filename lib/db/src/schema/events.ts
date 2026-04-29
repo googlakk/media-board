@@ -16,6 +16,7 @@ export const eventsTable = pgTable("events", {
   eventDate: timestamp("event_date", { withTimezone: true }),
   location: text("location"),
   submittedBy: text("submitted_by"),
+  contactInfo: text("contact_info"),
   assignee: text("assignee"),
   notes: text("notes"),
   status: eventStatusEnum("status").notNull().default("new"),

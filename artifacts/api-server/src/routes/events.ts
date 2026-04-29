@@ -15,6 +15,7 @@ import {
   GetEventStatsResponse,
   GetUpcomingEventsResponse,
 } from "@workspace/api-zod";
+import { broadcast } from "../lib/ws";
 
 const router: IRouter = Router();
 
@@ -127,12 +128,19 @@ router.post("/events", async (req, res): Promise<void> => {
       eventDate: parsed.data.eventDate ?? null,
       location: parsed.data.location ?? null,
       submittedBy: parsed.data.submittedBy ?? null,
+      contactInfo: parsed.data.contactInfo ?? null,
       assignee: parsed.data.assignee ?? null,
       notes: parsed.data.notes ?? null,
       status,
       position,
     })
     .returning();
+  broadcast({
+    type: "event_created",
+    eventId: row.id,
+    title: row.title,
+    submittedBy: row.submittedBy,
+  });
   res.status(201).json(GetEventResponse.parse(row));
 });
 
@@ -173,6 +181,8 @@ router.patch("/events/:id", async (req, res): Promise<void> => {
     updates.eventDate = parsed.data.eventDate ?? null;
   if (parsed.data.location !== undefined)
     updates.location = parsed.data.location ?? null;
+  if (parsed.data.contactInfo !== undefined)
+    updates.contactInfo = parsed.data.contactInfo ?? null;
   if (parsed.data.assignee !== undefined)
     updates.assignee = parsed.data.assignee ?? null;
   if (parsed.data.notes !== undefined)
@@ -206,6 +216,7 @@ router.patch("/events/:id", async (req, res): Promise<void> => {
     res.status(404).json({ error: "Event not found" });
     return;
   }
+  broadcast({ type: "event_updated", eventId: row.id });
   res.json(GetEventResponse.parse(row));
 });
 
@@ -223,6 +234,7 @@ router.delete("/events/:id", async (req, res): Promise<void> => {
     res.status(404).json({ error: "Event not found" });
     return;
   }
+  broadcast({ type: "event_deleted", eventId: row.id });
   res.sendStatus(204);
 });
 
@@ -302,6 +314,7 @@ router.post("/events/:id/move", async (req, res): Promise<void> => {
   });
 
   const rows = await listAllOrdered();
+  broadcast({ type: "event_moved", eventId: params.data.id });
   res.json(MoveEventResponse.parse(rows));
 });
 

@@ -225,6 +225,8 @@ components:
           type: ["string", "null"]
         submittedBy:
           type: ["string", "null"]
+        contactInfo:
+          type: ["string", "null"]
         assignee:
           type: ["string", "null"]
         notes:
@@ -246,6 +248,7 @@ components:
         - eventDate
         - location
         - submittedBy
+        - contactInfo
         - assignee
         - notes
         - status
@@ -268,6 +271,8 @@ components:
           type: ["string", "null"]
         submittedBy:
           type: ["string", "null"]
+        contactInfo:
+          type: ["string", "null"]
         assignee:
           type: ["string", "null"]
         notes:
@@ -289,6 +294,8 @@ components:
           type: ["string", "null"]
           format: date-time
         location:
+          type: ["string", "null"]
+        contactInfo:
           type: ["string", "null"]
         assignee:
           type: ["string", "null"]

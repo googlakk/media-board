@@ -59,6 +59,7 @@ const eventSchema = z.object({
   description: z.string().nullable().optional(),
   eventDate: z.date().nullable().optional(),
   location: z.string().nullable().optional(),
+  contactInfo: z.string().nullable().optional(),
   assignee: z.string().nullable().optional(),
   notes: z.string().nullable().optional(),
   status: z.enum([EventStatus.new, EventStatus.in_progress, EventStatus.shot, EventStatus.published]),
@@ -89,6 +90,7 @@ export function EventDialog({ open, onOpenChange, mode, event }: EventDialogProp
       description: "",
       eventDate: null,
       location: "",
+      contactInfo: "",
       assignee: "",
       notes: "",
       status: EventStatus.new,
@@ -102,6 +104,7 @@ export function EventDialog({ open, onOpenChange, mode, event }: EventDialogProp
         description: event.description || "",
         eventDate: event.eventDate ? new Date(event.eventDate) : null,
         location: event.location || "",
+        contactInfo: event.contactInfo || "",
         assignee: event.assignee || "",
         notes: event.notes || "",
         status: event.status,
@@ -112,6 +115,7 @@ export function EventDialog({ open, onOpenChange, mode, event }: EventDialogProp
         description: "",
         eventDate: null,
         location: "",
+        contactInfo: "",
         assignee: "",
         notes: "",
         status: EventStatus.new,
@@ -283,6 +287,24 @@ export function EventDialog({ open, onOpenChange, mode, event }: EventDialogProp
                   )}
                 />
               </div>
+
+              <FormField
+                control={form.control}
+                name="contactInfo"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>От кого / контакт для связи</FormLabel>
+                    <FormControl>
+                      <Input
+                        placeholder="Имя, должность, телефон или Telegram"
+                        {...field}
+                        value={field.value || ""}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
 
               <FormField
                 control={form.control}

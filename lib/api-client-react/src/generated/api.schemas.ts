@@ -34,6 +34,8 @@ export interface Event {
   /** @nullable */
   submittedBy: string | null;
   /** @nullable */
+  contactInfo: string | null;
+  /** @nullable */
   assignee: string | null;
   /** @nullable */
   notes: string | null;
@@ -55,6 +57,8 @@ export interface CreateEventInput {
   /** @nullable */
   submittedBy?: string | null;
   /** @nullable */
+  contactInfo?: string | null;
+  /** @nullable */
   assignee?: string | null;
   /** @nullable */
   notes?: string | null;
@@ -70,6 +74,8 @@ export interface UpdateEventInput {
   eventDate?: string | null;
   /** @nullable */
   location?: string | null;
+  /** @nullable */
+  contactInfo?: string | null;
   /** @nullable */
   assignee?: string | null;
   /** @nullable */

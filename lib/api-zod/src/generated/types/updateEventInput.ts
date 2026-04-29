@@ -17,6 +17,8 @@ export interface UpdateEventInput {
   /** @nullable */
   location?: string | null;
   /** @nullable */
+  contactInfo?: string | null;
+  /** @nullable */
   assignee?: string | null;
   /** @nullable */
   notes?: string | null;
