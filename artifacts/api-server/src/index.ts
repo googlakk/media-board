@@ -3,6 +3,7 @@ import app from "./app";
 import { logger } from "./lib/logger";
 import { startTelegramBot } from "./lib/telegram-bot";
 import { attachWebSocketServer } from "./lib/ws";
+import router from "./routes";
 
 const rawPort = process.env["PORT"];
 
@@ -23,7 +24,7 @@ attachWebSocketServer(server);
 
 server.listen(port, () => {
   logger.info({ port }, "Server listening");
-  startTelegramBot().catch((err) => {
+  startTelegramBot(router).catch((err) => {
     logger.error({ err }, "Failed to start Telegram bot");
   });
 });

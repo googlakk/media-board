@@ -1,4 +1,5 @@
 import TelegramBot from "node-telegram-bot-api";
+import type { Router } from "express";
 import { db, eventsTable } from "@workspace/db";
 import { eq, sql } from "drizzle-orm";
 import { logger } from "./logger";
@@ -71,7 +72,6 @@ function parseDate(input: string): Date | null {
   if (/^завтра$/.test(s)) { const d = new Date(today); d.setDate(d.getDate() + 1); return d; }
   if (/^послезавтра$/.test(s)) { const d = new Date(today); d.setDate(d.getDate() + 2); return d; }
 
-  // "в пятницу" / "пятница"
   const wdMatch = s.match(/^(?:в\s+)?(\S+)$/);
   if (wdMatch) {
     const wd = WEEKDAYS_RU[wdMatch[1]];
@@ -83,7 +83,6 @@ function parseDate(input: string): Date | null {
     }
   }
 
-  // DD.MM.YYYY / DD.MM.YY / DD.MM / DD/MM/YYYY / DD-MM-YYYY
   const numSep = s.match(/^(\d{1,2})[./\-](\d{1,2})(?:[./\-](\d{2,4}))?$/);
   if (numSep) {
     const [, dd, mm, yyyy] = numSep;
@@ -93,14 +92,12 @@ function parseDate(input: string): Date | null {
     if (!isNaN(d.getTime())) return d;
   }
 
-  // YYYY-MM-DD (ISO)
   const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (iso) {
     const d = new Date(parseInt(iso[1]), parseInt(iso[2]) - 1, parseInt(iso[3]), 12, 0);
     if (!isNaN(d.getTime())) return d;
   }
 
-  // "9 мая" / "9 мая 2026" / "9мая"
   const ruDate = s.match(/^(\d{1,2})\s*([а-яё]+)\s*(\d{2,4})?$/);
   if (ruDate) {
     const [, dd, monthStr, yyyy] = ruDate;
@@ -120,7 +117,6 @@ function parseTime(input: string): [number, number] | null {
   const s = input.trim().toLowerCase();
   if (!s || SKIP_RE.test(s)) return null;
 
-  // HH:MM / HH.MM / HH-MM / HH MM
   const m = s.match(/^(\d{1,2})[:.\- ](\d{2})$/);
   if (m) {
     const h = parseInt(m[1], 10);
@@ -128,7 +124,6 @@ function parseTime(input: string): [number, number] | null {
     if (h >= 0 && h <= 23 && min >= 0 && min <= 59) return [h, min];
   }
 
-  // HHMM (4 digits)
   const m4 = s.match(/^(\d{2})(\d{2})$/);
   if (m4) {
     const h = parseInt(m4[1], 10);
@@ -136,14 +131,12 @@ function parseTime(input: string): [number, number] | null {
     if (h >= 0 && h <= 23 && min >= 0 && min <= 59) return [h, min];
   }
 
-  // "14ч" / "14 ч" / "14 часов" / "14h"
   const hOnly = s.match(/^(\d{1,2})\s*(?:ч(?:ас(?:ов)?)?|h(?:r)?)$/);
   if (hOnly) {
     const h = parseInt(hOnly[1], 10);
     if (h >= 0 && h <= 23) return [h, 0];
   }
 
-  // plain number 0-23
   const plain = s.match(/^(\d{1,2})$/);
   if (plain) {
     const h = parseInt(plain[1], 10);
@@ -205,14 +198,52 @@ function cancelOnlyKeyboard(): TelegramBot.InlineKeyboardMarkup {
   };
 }
 
-// ─── Kill any other polling instance via Telegram API ─────────────────────────
+// ─── Bot factory ───────────────────────────────────────────────────────────────
+
+function createBot(token: string): TelegramBot {
+  // In production we use webhook mode (no polling), so Telegram pushes updates
+  // to our HTTPS endpoint instead of us pulling them. This prevents the 409
+  // Conflict that occurs when both the dev server AND the production deployment
+  // try to long-poll the same token simultaneously.
+  const isProduction = process.env.NODE_ENV === "production";
+
+  const bot = new TelegramBot(token, {
+    polling: isProduction
+      ? false
+      : { autoStart: true, interval: 300, params: { timeout: 10 } },
+    webHook: isProduction ? { autoOpen: false } : false,
+  });
+
+  return bot;
+}
+
+// ─── Webhook registration (production only) ────────────────────────────────────
+
+async function registerWebhook(bot: TelegramBot, token: string): Promise<void> {
+  const domains = process.env.REPLIT_DOMAINS ?? "";
+  const domain = domains.split(",")[0]?.trim();
+  if (!domain) {
+    logger.warn("REPLIT_DOMAINS not set — cannot register Telegram webhook, falling back to polling");
+    await clearOtherPolling(token);
+    // @ts-expect-error — setOptions is not in the type defs but exists at runtime
+    bot.options.polling = { autoStart: true, interval: 300, params: { timeout: 10 } };
+    bot.startPolling();
+    return;
+  }
+
+  const webhookUrl = `https://${domain}/api/telegram-webhook`;
+  try {
+    await bot.setWebHook(webhookUrl);
+    logger.info({ webhookUrl }, "Telegram webhook registered");
+  } catch (err) {
+    logger.error({ err }, "Failed to register Telegram webhook");
+  }
+}
 
 async function clearOtherPolling(token: string): Promise<void> {
   try {
-    // deleteWebhook with drop_pending_updates forces Telegram to reset getUpdates sessions
     const url = `https://api.telegram.org/bot${token}/deleteWebhook?drop_pending_updates=true`;
     await fetch(url);
-    // Give Telegram a moment to settle before we start polling
     await new Promise((r) => setTimeout(r, 1500));
     logger.info("Telegram: cleared previous polling sessions");
   } catch (err) {
@@ -222,49 +253,69 @@ async function clearOtherPolling(token: string): Promise<void> {
 
 // ─── Main export ───────────────────────────────────────────────────────────────
 
-export async function startTelegramBot(): Promise<void> {
+/**
+ * Initialise the Telegram bot.
+ *
+ * In **production** the bot receives updates via webhook (no polling).
+ * Call `attachTelegramWebhook(router)` to mount the webhook endpoint.
+ *
+ * In **development** the bot uses long-polling after forcefully clearing any
+ * stale session left by a previous run or the production instance.
+ */
+export async function startTelegramBot(webhookRouter: Router): Promise<void> {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) {
     logger.warn("TELEGRAM_BOT_TOKEN not set — Telegram bot disabled");
     return;
   }
 
-  // Kill any stale polling sessions (production / previous dev restart)
-  await clearOtherPolling(token);
+  const isProduction = process.env.NODE_ENV === "production";
+  const bot = createBot(token);
 
-  const bot = new TelegramBot(token, {
-    polling: {
-      autoStart: true,
-      interval: 300,
-      params: { timeout: 10 },
-    },
-  });
+  if (isProduction) {
+    await registerWebhook(bot, token);
 
-  // Register slash-command hints in Telegram's "/" menu
+    // Mount the webhook endpoint so Telegram can POST updates to us
+    webhookRouter.post("/telegram-webhook", (req, res) => {
+      try {
+        bot.processUpdate(req.body as TelegramBot.Update);
+        res.sendStatus(200);
+      } catch (err) {
+        logger.error({ err }, "Telegram webhook processing error");
+        res.sendStatus(500);
+      }
+    });
+
+    logger.info("Telegram bot started (webhook mode)");
+  } else {
+    // Development: kill any stale session first, then start polling
+    await clearOtherPolling(token);
+    logger.info("Telegram bot started (polling mode)");
+  }
+
+  // ── Register commands hint ────────────────────────────────────────────────
   bot.setMyCommands([
     { command: "new", description: "Подать заявку на съёмку" },
     { command: "cancel", description: "Отменить текущую заявку" },
     { command: "help", description: "Помощь" },
   ]).catch(() => {});
 
-  // Graceful shutdown
-  const stop = () => {
-    bot.stopPolling().catch(() => {});
-  };
-  process.once("SIGTERM", stop);
-  process.once("SIGINT", stop);
+  // ── Graceful shutdown (polling only) ─────────────────────────────────────
+  if (!isProduction) {
+    const stop = () => { bot.stopPolling().catch(() => {}); };
+    process.once("SIGTERM", stop);
+    process.once("SIGINT", stop);
+  }
 
   bot.on("polling_error", (err) => {
-    // 409 means another instance took over — back off briefly, it resolves itself
     if (String(err.message).includes("409")) {
-      logger.warn("Telegram 409: another instance detected, will retry");
+      logger.warn("Telegram 409: another instance detected");
     } else {
       logger.error({ err: err.message }, "Telegram polling error");
     }
   });
 
-  // ── /start ──────────────────────────────────────────────────────────────────
-
+  // ── /start ─────────────────────────────────────────────────────────────────
   bot.onText(/^\/start/, (msg) => {
     sessions.delete(msg.chat.id);
     bot.sendMessage(
@@ -287,8 +338,7 @@ export async function startTelegramBot(): Promise<void> {
     bot.sendMessage(msg.chat.id, "Заявка отменена.", { reply_markup: mainMenuKeyboard() });
   });
 
-  // ── Start flow ──────────────────────────────────────────────────────────────
-
+  // ── Start new flow ─────────────────────────────────────────────────────────
   function startNewFlow(chatId: number, submittedBy: string): void {
     sessions.set(chatId, { step: "awaitingTitle", submittedBy });
     bot.sendMessage(
@@ -300,8 +350,7 @@ export async function startTelegramBot(): Promise<void> {
 
   bot.onText(/^\/new/, (msg) => startNewFlow(msg.chat.id, whoSubmitted(msg)));
 
-  // ── Callback queries (button taps) ──────────────────────────────────────────
-
+  // ── Callback queries (inline button taps) ─────────────────────────────────
   bot.on("callback_query", async (query) => {
     const chatId = query.message?.chat.id;
     if (!chatId) return;
@@ -320,18 +369,19 @@ export async function startTelegramBot(): Promise<void> {
     }
   });
 
-  // ── Text messages ────────────────────────────────────────────────────────────
-
+  // ── Text messages ──────────────────────────────────────────────────────────
   bot.on("message", async (msg) => {
     if (!msg.text) return;
     const chatId = msg.chat.id;
     const text = msg.text.trim();
 
+    // Reply-keyboard button
     if (text === "Подать заявку на съёмку") {
       startNewFlow(chatId, whoSubmitted(msg));
       return;
     }
 
+    // Commands handled by onText above
     if (text.startsWith("/")) return;
 
     const session = sessions.get(chatId);
@@ -345,8 +395,7 @@ export async function startTelegramBot(): Promise<void> {
     await handleStep(chatId, session, text);
   });
 
-  // ── Step handler ─────────────────────────────────────────────────────────────
-
+  // ── Step handler ───────────────────────────────────────────────────────────
   async function handleStep(chatId: number, session: Session, text: string): Promise<void> {
     try {
       switch (session.step) {
@@ -370,7 +419,6 @@ export async function startTelegramBot(): Promise<void> {
           if (SKIP_RE.test(text)) {
             session.dateOnly = null;
             session.eventDate = null;
-            // Skip time step too
             session.step = "awaitingLocation";
             bot.sendMessage(
               chatId,
@@ -391,7 +439,7 @@ export async function startTelegramBot(): Promise<void> {
             session.step = "awaitingTime";
             bot.sendMessage(
               chatId,
-              `Дата: ${formatDate(d)}\n\nШаг 3 из 6 — Время\n\nВ какое время начнётся? Например: 14:00, 9:30, 15ч.\n\nЕсли время неизвестно — нажмите «Пропустить».",`,
+              `Дата: ${formatDate(d)}\n\nШаг 3 из 6 — Время\n\nВ какое время начнётся? Например: 14:00, 9:30, 15ч.\n\nЕсли время неизвестно — нажмите «Пропустить».`,
               { reply_markup: skipCancelKeyboard() },
             );
           }
@@ -440,7 +488,7 @@ export async function startTelegramBot(): Promise<void> {
           session.step = "awaitingContact";
           bot.sendMessage(
             chatId,
-            "Шаг 6 из 6 — Контакт\n\nОт кого эта заявка? Напишите ваше имя и как с вами связаться.\n\nНапример: «Анна Петровна, учитель музыки, +7 999 123-45-67» или «Иван, 9А, @ivan»",
+            "Шаг 6 из 6 — Контакт\n\nОт кого эта заявка? Напишите ваше имя и как с вами связаться.\n\nНапример: «Анна Петровна, учитель музыки, +7 999 123-45-67»",
             { reply_markup: cancelOnlyKeyboard() },
           );
           break;
@@ -506,6 +554,4 @@ export async function startTelegramBot(): Promise<void> {
       });
     }
   }
-
-  logger.info("Telegram bot started (polling)");
 }
