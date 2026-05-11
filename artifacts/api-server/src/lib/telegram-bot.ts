@@ -61,7 +61,6 @@ const WEEKDAYS_RU: Record<string, number> = {
 
 // ─── Parsers ───────────────────────────────────────────────────────────────────
 
-/** Parse a date-only string into a Date (time set to midnight). Returns null if not parseable. */
 function parseDate(input: string): Date | null {
   const s = input.trim().toLowerCase();
   if (!s || SKIP_RE.test(s)) return null;
@@ -73,6 +72,7 @@ function parseDate(input: string): Date | null {
   if (/^завтра$/.test(s)) { const d = new Date(today); d.setDate(d.getDate() + 1); return d; }
   if (/^послезавтра$/.test(s)) { const d = new Date(today); d.setDate(d.getDate() + 2); return d; }
 
+  // "в пятницу" / "пятница"
   const wdMatch = s.match(/^(?:в\s+)?(\S+)$/);
   if (wdMatch) {
     const wd = WEEKDAYS_RU[wdMatch[1]];
@@ -84,6 +84,7 @@ function parseDate(input: string): Date | null {
     }
   }
 
+  // DD.MM.YYYY / DD.MM.YY / DD.MM / DD/MM/YYYY / DD-MM-YYYY
   const numSep = s.match(/^(\d{1,2})[./\-](\d{1,2})(?:[./\-](\d{2,4}))?$/);
   if (numSep) {
     const [, dd, mm, yyyy] = numSep;
@@ -93,12 +94,14 @@ function parseDate(input: string): Date | null {
     if (!isNaN(d.getTime())) return d;
   }
 
+  // YYYY-MM-DD (ISO)
   const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (iso) {
     const d = new Date(parseInt(iso[1]), parseInt(iso[2]) - 1, parseInt(iso[3]), 0, 0, 0, 0);
     if (!isNaN(d.getTime())) return d;
   }
 
+  // "9 мая" / "9 мая 2026" / "9мая"
   const ruDate = s.match(/^(\d{1,2})\s*([а-яё]+)\s*(\d{2,4})?$/);
   if (ruDate) {
     const [, dd, monthStr, yyyy] = ruDate;
@@ -110,10 +113,6 @@ function parseDate(input: string): Date | null {
       if (!isNaN(d.getTime())) return d;
     }
   }
-
-  // Fallback: JS Date constructor
-  const fallback = new Date(s);
-  if (!isNaN(fallback.getTime())) { fallback.setHours(0, 0, 0, 0); return fallback; }
 
   return null;
 }
@@ -156,10 +155,14 @@ function formatDate(d: Date): string {
 }
 
 function formatDateTime(d: Date): string {
-  return d.toLocaleString("ru-RU", {
-    day: "numeric", month: "long", year: "numeric",
-    hour: "2-digit", minute: "2-digit",
-  });
+  const hasTime = d.getHours() !== 0 || d.getMinutes() !== 0;
+  if (hasTime) {
+    return d.toLocaleString("ru-RU", {
+      day: "numeric", month: "long", year: "numeric",
+      hour: "2-digit", minute: "2-digit",
+    });
+  }
+  return formatDate(d);
 }
 
 function whoSubmitted(msg: TelegramBot.Message): string {
@@ -203,136 +206,61 @@ function cancelOnlyKeyboard(): TelegramBot.InlineKeyboardMarkup {
   };
 }
 
-// ─── Bot factory ───────────────────────────────────────────────────────────────
-
-function createBot(token: string): TelegramBot {
-  // In production we use webhook mode (no polling), so Telegram pushes updates
-  // to our HTTPS endpoint instead of us pulling them. This prevents the 409
-  // Conflict that occurs when both the dev server AND the production deployment
-  // try to long-poll the same token simultaneously.
-  const isProduction = process.env.NODE_ENV === "production";
-
-  const bot = new TelegramBot(token, {
-    polling: isProduction
-      ? false
-      : { autoStart: true, interval: 300, params: { timeout: 10 } },
-    webHook: isProduction ? { autoOpen: false } : false,
-  });
-
-  return bot;
-}
-
-// ─── Webhook registration (production only) ────────────────────────────────────
-
-async function registerWebhook(bot: TelegramBot, token: string): Promise<void> {
-  const domains = process.env.REPLIT_DOMAINS ?? "";
-  const domain = domains.split(",")[0]?.trim();
-  if (!domain) {
-    logger.warn("REPLIT_DOMAINS not set — cannot register Telegram webhook, falling back to polling");
-    await clearOtherPolling(token);
-    // @ts-expect-error — setOptions is not in the type defs but exists at runtime
-    bot.options.polling = { autoStart: true, interval: 300, params: { timeout: 10 } };
-    bot.startPolling();
-    return;
-  }
-
-  const webhookUrl = `https://${domain}/api/telegram-webhook`;
-  try {
-    await bot.setWebHook(webhookUrl);
-    logger.info({ webhookUrl }, "Telegram webhook registered");
-  } catch (err) {
-    logger.error({ err }, "Failed to register Telegram webhook");
-  }
-}
-
-async function clearOtherPolling(token: string): Promise<void> {
-  try {
-    const url = `https://api.telegram.org/bot${token}/deleteWebhook?drop_pending_updates=true`;
-    await fetch(url);
-    await new Promise((r) => setTimeout(r, 1500));
-    logger.info("Telegram: cleared previous polling sessions");
-  } catch (err) {
-    logger.warn({ err }, "Telegram: could not clear previous polling");
-  }
-}
-
-// ─── Main export ───────────────────────────────────────────────────────────────
+// ─── Webhook helpers ───────────────────────────────────────────────────────────
 
 /**
- * Initialise the Telegram bot.
- *
- * In **production** the bot receives updates via webhook (no polling).
- * Call `attachTelegramWebhook(router)` to mount the webhook endpoint.
- *
- * In **development** the bot uses long-polling after forcefully clearing any
- * stale session left by a previous run or the production instance.
+ * Resolve the HTTPS domain for the webhook URL.
+ * - In production: first entry of REPLIT_DOMAINS
+ * - In development: REPLIT_DEV_DOMAIN
+ * Returns null if neither is set (bot will be disabled).
  */
-export async function startTelegramBot(webhookRouter: Router): Promise<void> {
-  const token = process.env.TELEGRAM_BOT_TOKEN;
-  if (!token) {
-    logger.warn("TELEGRAM_BOT_TOKEN not set — Telegram bot disabled");
-    return;
-  }
-
+function resolveWebhookDomain(): string | null {
   const isProduction = process.env.NODE_ENV === "production";
-  const bot = createBot(token);
-
   if (isProduction) {
-    await registerWebhook(bot, token);
-
-    // Mount the webhook endpoint so Telegram can POST updates to us
-    webhookRouter.post("/telegram-webhook", (req, res) => {
-      try {
-        bot.processUpdate(req.body as TelegramBot.Update);
-        res.sendStatus(200);
-      } catch (err) {
-        logger.error({ err }, "Telegram webhook processing error");
-        res.sendStatus(500);
-      }
-    });
-
-    logger.info("Telegram bot started (webhook mode)");
-  } else {
-    // Development: kill any stale session first, then start polling
-    await clearOtherPolling(token);
-    logger.info("Telegram bot started (polling mode)");
+    const domains = process.env.REPLIT_DOMAINS ?? "";
+    return domains.split(",")[0]?.trim() || null;
   }
+  return process.env.REPLIT_DEV_DOMAIN ?? null;
+}
 
-  // ── Register commands hint ────────────────────────────────────────────────
+async function registerWebhook(bot: TelegramBot, domain: string): Promise<void> {
+  const webhookUrl = `https://${domain}/api/telegram-webhook`;
+  await bot.setWebHook(webhookUrl, { drop_pending_updates: true });
+  logger.info({ webhookUrl }, "Telegram webhook registered");
+}
+
+// ─── Bot registration ───────────────────────────────────────────────────────────────
+
+/** Wrapper that silences unhandled rejections from Telegram API calls */
+function send(
+  bot: TelegramBot,
+  chatId: number,
+  text: string,
+  opts?: TelegramBot.SendMessageOptions,
+): void {
+  bot.sendMessage(chatId, text, opts).catch((err: unknown) => {
+    logger.warn({ err: String(err), chatId }, "Telegram sendMessage failed");
+  });
+}
+
+function registerHandlers(bot: TelegramBot): void {
   bot.setMyCommands([
     { command: "new", description: "Подать заявку на съёмку" },
     { command: "cancel", description: "Отменить текущую заявку" },
     { command: "help", description: "Помощь" },
   ]).catch(() => {});
 
-  // ── Graceful shutdown (polling only) ─────────────────────────────────────
-  if (!isProduction) {
-    const stop = () => { bot.stopPolling().catch(() => {}); };
-    process.once("SIGTERM", stop);
-    process.once("SIGINT", stop);
-  }
-
-  bot.on("polling_error", (err) => {
-    if (String(err.message).includes("409")) {
-      logger.warn("Telegram 409: another instance detected");
-    } else {
-      logger.error({ err: err.message }, "Telegram polling error");
-    }
-  });
-
-  // ── /start ─────────────────────────────────────────────────────────────────
+  // ── /start ──────────────────────────────────────────────────────────────────
   bot.onText(/^\/start/, (msg) => {
     sessions.delete(msg.chat.id);
-    bot.sendMessage(
-      msg.chat.id,
+    send(bot, msg.chat.id,
       "Привет! Я бот медиа-отдела школы.\n\nНажмите кнопку ниже, чтобы подать заявку на съёмку мероприятия.",
       { reply_markup: mainMenuKeyboard() },
     );
   });
 
   bot.onText(/^\/help/, (msg) => {
-    bot.sendMessage(
-      msg.chat.id,
+    send(bot, msg.chat.id,
       "Нажмите кнопку «Подать заявку на съёмку» или введите /new.\n\n/cancel — отменить текущую заявку.",
       { reply_markup: mainMenuKeyboard() },
     );
@@ -340,14 +268,13 @@ export async function startTelegramBot(webhookRouter: Router): Promise<void> {
 
   bot.onText(/^\/cancel/, (msg) => {
     sessions.delete(msg.chat.id);
-    bot.sendMessage(msg.chat.id, "Заявка отменена.", { reply_markup: mainMenuKeyboard() });
+    send(bot, msg.chat.id, "Заявка отменена.", { reply_markup: mainMenuKeyboard() });
   });
 
-  // ── Start new flow ─────────────────────────────────────────────────────────
+  // ── Start flow ───────────────────────────────────────────────────────────────
   function startNewFlow(chatId: number, submittedBy: string): void {
     sessions.set(chatId, { step: "awaitingTitle", submittedBy });
-    bot.sendMessage(
-      chatId,
+    send(bot, chatId,
       "Шаг 1 из 6 — Название\n\nКак называется мероприятие?\nНапример: «Концерт ко Дню Победы»",
       { reply_markup: cancelOnlyKeyboard() },
     );
@@ -355,7 +282,7 @@ export async function startTelegramBot(webhookRouter: Router): Promise<void> {
 
   bot.onText(/^\/new/, (msg) => startNewFlow(msg.chat.id, whoSubmitted(msg)));
 
-  // ── Callback queries (inline button taps) ─────────────────────────────────
+  // ── Inline buttons ───────────────────────────────────────────────────────────
   bot.on("callback_query", async (query) => {
     const chatId = query.message?.chat.id;
     if (!chatId) return;
@@ -363,7 +290,7 @@ export async function startTelegramBot(webhookRouter: Router): Promise<void> {
 
     if (query.data === CANCEL_DATA) {
       sessions.delete(chatId);
-      bot.sendMessage(chatId, "Заявка отменена.", { reply_markup: mainMenuKeyboard() });
+      send(bot, chatId, "Заявка отменена.", { reply_markup: mainMenuKeyboard() });
       return;
     }
 
@@ -374,24 +301,22 @@ export async function startTelegramBot(webhookRouter: Router): Promise<void> {
     }
   });
 
-  // ── Text messages ──────────────────────────────────────────────────────────
+  // ── Text messages ────────────────────────────────────────────────────────────
   bot.on("message", async (msg) => {
     if (!msg.text) return;
     const chatId = msg.chat.id;
     const text = msg.text.trim();
 
-    // Reply-keyboard button
     if (text === "Подать заявку на съёмку") {
       startNewFlow(chatId, whoSubmitted(msg));
       return;
     }
 
-    // Commands handled by onText above
-    if (text.startsWith("/")) return;
+    if (text.startsWith("/")) return; // handled by onText above
 
     const session = sessions.get(chatId);
     if (!session) {
-      bot.sendMessage(chatId, "Нажмите кнопку ниже, чтобы подать заявку.", {
+      send(bot, chatId, "Нажмите кнопку ниже, чтобы подать заявку.", {
         reply_markup: mainMenuKeyboard(),
       });
       return;
@@ -400,20 +325,19 @@ export async function startTelegramBot(webhookRouter: Router): Promise<void> {
     await handleStep(chatId, session, text);
   });
 
-  // ── Step handler ───────────────────────────────────────────────────────────
+  // ── Step handler ─────────────────────────────────────────────────────────────
   async function handleStep(chatId: number, session: Session, text: string): Promise<void> {
     try {
       switch (session.step) {
 
         case "awaitingTitle": {
           if (!text || SKIP_RE.test(text)) {
-            bot.sendMessage(chatId, "Название не может быть пустым. Напишите название мероприятия.");
+            send(bot, chatId, "Название не может быть пустым. Напишите название мероприятия.");
             return;
           }
           session.title = text;
           session.step = "awaitingDate";
-          bot.sendMessage(
-            chatId,
+          send(bot, chatId,
             "Шаг 2 из 6 — Дата\n\nКогда состоится мероприятие? Пишите как удобно:\n• 9 мая\n• 09.05.2026\n• завтра / послезавтра\n• в пятницу\n\nЕсли дата неизвестна — нажмите «Пропустить».",
             { reply_markup: skipCancelKeyboard() },
           );
@@ -425,16 +349,14 @@ export async function startTelegramBot(webhookRouter: Router): Promise<void> {
             session.dateOnly = null;
             session.eventDate = null;
             session.step = "awaitingLocation";
-            bot.sendMessage(
-              chatId,
+            send(bot, chatId,
               "Шаг 4 из 6 — Место\n\nГде будет проходить мероприятие?\nНапример: «Актовый зал», «Спортзал», «Школьный двор».\n\nЕсли неизвестно — нажмите «Пропустить».",
               { reply_markup: skipCancelKeyboard() },
             );
           } else {
             const d = parseDate(text);
             if (!d) {
-              bot.sendMessage(
-                chatId,
+              send(bot, chatId,
                 "Не могу распознать дату. Попробуйте:\n• 9 мая\n• 09.05.2026\n• завтра\n• в пятницу\n\nИли нажмите «Пропустить».",
                 { reply_markup: skipCancelKeyboard() },
               );
@@ -442,8 +364,7 @@ export async function startTelegramBot(webhookRouter: Router): Promise<void> {
             }
             session.dateOnly = d;
             session.step = "awaitingTime";
-            bot.sendMessage(
-              chatId,
+            send(bot, chatId,
               `Дата: ${formatDate(d)}\n\nШаг 3 из 6 — Время\n\nВ какое время начнётся? Например: 14:00, 9:30, 15ч.\n\nЕсли время неизвестно — нажмите «Пропустить».`,
               { reply_markup: skipCancelKeyboard() },
             );
@@ -457,8 +378,7 @@ export async function startTelegramBot(webhookRouter: Router): Promise<void> {
           } else {
             const t = parseTime(text);
             if (!t) {
-              bot.sendMessage(
-                chatId,
+              send(bot, chatId,
                 "Не могу распознать время. Напишите в формате 14:00 или 9:30.\nИли нажмите «Пропустить».",
                 { reply_markup: skipCancelKeyboard() },
               );
@@ -469,8 +389,7 @@ export async function startTelegramBot(webhookRouter: Router): Promise<void> {
             session.eventDate = d;
           }
           session.step = "awaitingLocation";
-          bot.sendMessage(
-            chatId,
+          send(bot, chatId,
             "Шаг 4 из 6 — Место\n\nГде будет проходить мероприятие?\nНапример: «Актовый зал», «Спортзал», «Школьный двор».\n\nЕсли неизвестно — нажмите «Пропустить».",
             { reply_markup: skipCancelKeyboard() },
           );
@@ -480,8 +399,7 @@ export async function startTelegramBot(webhookRouter: Router): Promise<void> {
         case "awaitingLocation": {
           session.location = SKIP_RE.test(text) ? null : (text || null);
           session.step = "awaitingDescription";
-          bot.sendMessage(
-            chatId,
+          send(bot, chatId,
             "Шаг 5 из 6 — Описание\n\nОпишите мероприятие: что снимать, кто участвует, особые пожелания.\n\nЕсли нечего добавить — нажмите «Пропустить».",
             { reply_markup: skipCancelKeyboard() },
           );
@@ -491,8 +409,7 @@ export async function startTelegramBot(webhookRouter: Router): Promise<void> {
         case "awaitingDescription": {
           session.description = SKIP_RE.test(text) ? null : (text || null);
           session.step = "awaitingContact";
-          bot.sendMessage(
-            chatId,
+          send(bot, chatId,
             "Шаг 6 из 6 — Контакт\n\nОт кого эта заявка? Напишите ваше имя и как с вами связаться.\n\nНапример: «Анна Петровна, учитель музыки, +7 999 123-45-67»",
             { reply_markup: cancelOnlyKeyboard() },
           );
@@ -501,8 +418,7 @@ export async function startTelegramBot(webhookRouter: Router): Promise<void> {
 
         case "awaitingContact": {
           if (!text || SKIP_RE.test(text) || text.length < 2) {
-            bot.sendMessage(
-              chatId,
+            send(bot, chatId,
               "Пожалуйста, напишите ваше имя и контакт — медиа-отдел сможет уточнить детали.",
               { reply_markup: cancelOnlyKeyboard() },
             );
@@ -536,8 +452,7 @@ export async function startTelegramBot(webhookRouter: Router): Promise<void> {
 
           const dateStr = created.eventDate ? formatDateTime(created.eventDate) : "не указана";
 
-          bot.sendMessage(
-            chatId,
+          send(bot, chatId,
             `Заявка принята!\n\n` +
               `Мероприятие: ${created.title}\n` +
               `Когда: ${dateStr}\n` +
@@ -554,9 +469,60 @@ export async function startTelegramBot(webhookRouter: Router): Promise<void> {
     } catch (err) {
       logger.error({ err }, "Telegram handler error");
       sessions.delete(chatId);
-      bot.sendMessage(chatId, "Произошла ошибка. Попробуйте ещё раз.", {
+      send(bot, chatId, "Произошла ошибка. Попробуйте ещё раз.", {
         reply_markup: mainMenuKeyboard(),
       });
     }
   }
+}
+
+// ─── Main export ───────────────────────────────────────────────────────────────
+
+/**
+ * Start the Telegram bot using webhook mode (works in both dev and production).
+ *
+ * - Resolves the current domain from REPLIT_DEV_DOMAIN (dev) or REPLIT_DOMAINS (prod)
+ * - Registers the webhook with Telegram (drop_pending_updates=true kills old polling)
+ * - Mounts POST /telegram-webhook on the given Express router
+ *
+ * Because we always use webhooks, there is no polling conflict even if multiple
+ * server instances are running — Telegram only delivers to the last registered URL.
+ */
+export async function startTelegramBot(webhookRouter: Router): Promise<void> {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) {
+    logger.warn("TELEGRAM_BOT_TOKEN not set — Telegram bot disabled");
+    return;
+  }
+
+  const domain = resolveWebhookDomain();
+  if (!domain) {
+    logger.warn("No domain available (REPLIT_DEV_DOMAIN / REPLIT_DOMAINS) — Telegram bot disabled");
+    return;
+  }
+
+  // Create bot in webhook mode (no polling at all)
+  const bot = new TelegramBot(token, { polling: false });
+
+  // Register webhook — this also drops any stale pending updates and kills
+  // any other instance that was polling (Telegram enforces one receiver)
+  await registerWebhook(bot, domain);
+
+  // Mount the endpoint that Telegram will POST updates to
+  webhookRouter.post("/telegram-webhook", (req, res) => {
+    try {
+      bot.processUpdate(req.body as TelegramBot.Update);
+      res.sendStatus(200);
+    } catch (err) {
+      logger.error({ err }, "Telegram webhook processing error");
+      res.sendStatus(500);
+    }
+  });
+
+  registerHandlers(bot);
+
+  logger.info(
+    { mode: "webhook", domain, env: process.env.NODE_ENV },
+    "Telegram bot started",
+  );
 }
