@@ -1,5 +1,5 @@
 import { useGetUpcomingEvents } from "@workspace/api-client-react";
-import { formatEventDate, formatRelative } from "@/lib/date-utils";
+import { formatEventDate, formatRelative, hasNonMidnightTime } from "@/lib/date-utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -97,6 +97,14 @@ export default function Schedule() {
                       </div>
                       
                       <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-muted-foreground mt-1">
+                        {event.eventDate && hasNonMidnightTime(event.eventDate) && (
+                          <div className="flex items-center gap-1 font-medium text-foreground">
+                            <Clock size={12} />
+                            <span>
+                              {new Date(event.eventDate).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}
+                            </span>
+                          </div>
+                        )}
                         {event.location && (
                           <div className="flex items-center gap-1">
                             <MapPin size={12} />

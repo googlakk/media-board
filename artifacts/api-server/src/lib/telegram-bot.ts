@@ -61,12 +61,13 @@ const WEEKDAYS_RU: Record<string, number> = {
 
 // ─── Parsers ───────────────────────────────────────────────────────────────────
 
+/** Parse a date-only string into a Date (time set to midnight). Returns null if not parseable. */
 function parseDate(input: string): Date | null {
   const s = input.trim().toLowerCase();
   if (!s || SKIP_RE.test(s)) return null;
 
   const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0);
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
 
   if (/^сегодня$/.test(s)) return today;
   if (/^завтра$/.test(s)) { const d = new Date(today); d.setDate(d.getDate() + 1); return d; }
@@ -88,13 +89,13 @@ function parseDate(input: string): Date | null {
     const [, dd, mm, yyyy] = numSep;
     let year = yyyy ? parseInt(yyyy, 10) : now.getFullYear();
     if (year < 100) year += 2000;
-    const d = new Date(year, parseInt(mm, 10) - 1, parseInt(dd, 10), 12, 0);
+    const d = new Date(year, parseInt(mm, 10) - 1, parseInt(dd, 10), 0, 0, 0, 0);
     if (!isNaN(d.getTime())) return d;
   }
 
   const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (iso) {
-    const d = new Date(parseInt(iso[1]), parseInt(iso[2]) - 1, parseInt(iso[3]), 12, 0);
+    const d = new Date(parseInt(iso[1]), parseInt(iso[2]) - 1, parseInt(iso[3]), 0, 0, 0, 0);
     if (!isNaN(d.getTime())) return d;
   }
 
@@ -105,10 +106,14 @@ function parseDate(input: string): Date | null {
     if (monthIdx !== undefined) {
       let year = yyyy ? parseInt(yyyy, 10) : now.getFullYear();
       if (year < 100) year += 2000;
-      const d = new Date(year, monthIdx, parseInt(dd, 10), 12, 0);
+      const d = new Date(year, monthIdx, parseInt(dd, 10), 0, 0, 0, 0);
       if (!isNaN(d.getTime())) return d;
     }
   }
+
+  // Fallback: JS Date constructor
+  const fallback = new Date(s);
+  if (!isNaN(fallback.getTime())) { fallback.setHours(0, 0, 0, 0); return fallback; }
 
   return null;
 }

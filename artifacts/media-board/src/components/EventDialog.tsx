@@ -58,6 +58,7 @@ const eventSchema = z.object({
   title: z.string().min(1, "Название обязательно"),
   description: z.string().nullable().optional(),
   eventDate: z.date().nullable().optional(),
+  eventTime: z.string().nullable().optional(),
   location: z.string().nullable().optional(),
   contactInfo: z.string().nullable().optional(),
   assignee: z.string().nullable().optional(),
@@ -89,6 +90,7 @@ export function EventDialog({ open, onOpenChange, mode, event }: EventDialogProp
       title: "",
       description: "",
       eventDate: null,
+      eventTime: "",
       location: "",
       contactInfo: "",
       assignee: "",
@@ -99,10 +101,16 @@ export function EventDialog({ open, onOpenChange, mode, event }: EventDialogProp
 
   useEffect(() => {
     if (open && mode === "edit" && event) {
+      const date = event.eventDate ? new Date(event.eventDate) : null;
+      const hasTime = date && (date.getHours() !== 0 || date.getMinutes() !== 0);
+      const timeStr = hasTime
+        ? `${String(date!.getHours()).padStart(2, "0")}:${String(date!.getMinutes()).padStart(2, "0")}`
+        : "";
       form.reset({
         title: event.title,
         description: event.description || "",
-        eventDate: event.eventDate ? new Date(event.eventDate) : null,
+        eventDate: date,
+        eventTime: timeStr,
         location: event.location || "",
         contactInfo: event.contactInfo || "",
         assignee: event.assignee || "",
@@ -114,6 +122,7 @@ export function EventDialog({ open, onOpenChange, mode, event }: EventDialogProp
         title: "",
         description: "",
         eventDate: null,
+        eventTime: "",
         location: "",
         contactInfo: "",
         assignee: "",
@@ -133,9 +142,19 @@ export function EventDialog({ open, onOpenChange, mode, event }: EventDialogProp
   };
 
   const onSubmit = (data: EventFormValues) => {
+    let combinedDate: Date | null = data.eventDate ?? null;
+    if (combinedDate && data.eventTime) {
+      const [hours, minutes] = data.eventTime.split(":").map(Number);
+      combinedDate = new Date(combinedDate);
+      combinedDate.setHours(hours, minutes, 0, 0);
+    } else if (combinedDate) {
+      combinedDate = new Date(combinedDate);
+      combinedDate.setHours(0, 0, 0, 0);
+    }
+    const { eventTime: _eventTime, ...rest } = data;
     const formattedData = {
-      ...data,
-      eventDate: data.eventDate ? data.eventDate.toISOString() : null,
+      ...rest,
+      eventDate: combinedDate ? combinedDate.toISOString() : null,
     };
 
     if (mode === "create") {
@@ -232,7 +251,28 @@ export function EventDialog({ open, onOpenChange, mode, event }: EventDialogProp
                     </FormItem>
                   )}
                 />
-                
+
+                <FormField
+                  control={form.control}
+                  name="eventTime"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Время начала</FormLabel>
+                      <FormControl>
+                        <Input
+                          type="time"
+                          {...field}
+                          value={field.value ?? ""}
+                          disabled={!form.watch("eventDate")}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <FormField
                   control={form.control}
                   name="status"

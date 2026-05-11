@@ -1,6 +1,6 @@
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { formatEventDate } from "@/lib/date-utils";
+import { formatEventDateWithTime } from "@/lib/date-utils";
 import type { Event } from "@workspace/api-client-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -66,7 +66,7 @@ export function KanbanCard({ event, onClick, isOverlay }: KanbanCardProps) {
               isOverdue ? "text-destructive font-medium" : "text-muted-foreground"
             )}>
               <Calendar size={13} className="shrink-0" />
-              <span className="truncate">{formatEventDate(event.eventDate)}</span>
+              <span className="truncate">{formatEventDateWithTime(event.eventDate)}</span>
             </div>
           )}
           
