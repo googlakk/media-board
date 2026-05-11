@@ -9,12 +9,7 @@ import { useToast } from "@/hooks/use-toast";
 
 type LiveMessage =
   | { type: "hello" }
-  | {
-      type: "event_created";
-      eventId: number;
-      title: string;
-      submittedBy: string | null;
-    }
+  | { type: "event_created"; eventId: number; title: string; submittedBy: string | null }
   | { type: "event_updated"; eventId: number }
   | { type: "event_moved"; eventId: number }
   | { type: "event_deleted"; eventId: number };
@@ -27,90 +22,95 @@ function buildWsUrl(): string {
 export function useLiveEvents(): void {
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  const reconnectTimer = useRef<number | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
-  const isMountedRef = useRef(true);
+
+  // Stable refs so the effect never re-runs due to reference changes
+  const queryClientRef = useRef(queryClient);
+  const toastRef = useRef(toast);
+  queryClientRef.current = queryClient;
+  toastRef.current = toast;
 
   useEffect(() => {
-    isMountedRef.current = true;
+    let ws: WebSocket | null = null;
+    let reconnectTimer: number | null = null;
+    let destroyed = false;
 
     const invalidateAll = () => {
-      queryClient.invalidateQueries({ queryKey: getListEventsQueryKey() });
-      queryClient.invalidateQueries({ queryKey: getGetEventStatsQueryKey() });
-      queryClient.invalidateQueries({ queryKey: getGetUpcomingEventsQueryKey() });
+      queryClientRef.current.invalidateQueries({ queryKey: getListEventsQueryKey() });
+      queryClientRef.current.invalidateQueries({ queryKey: getGetEventStatsQueryKey() });
+      queryClientRef.current.invalidateQueries({ queryKey: getGetUpcomingEventsQueryKey() });
+    };
+
+    const scheduleReconnect = (delayMs = 2000) => {
+      if (destroyed || reconnectTimer !== null) return;
+      reconnectTimer = window.setTimeout(() => {
+        reconnectTimer = null;
+        connect();
+      }, delayMs);
     };
 
     const connect = () => {
-      if (!isMountedRef.current) return;
-      let ws: WebSocket;
+      if (destroyed) return;
+
       try {
         ws = new WebSocket(buildWsUrl());
       } catch {
-        scheduleReconnect();
+        scheduleReconnect(3000);
         return;
       }
-      wsRef.current = ws;
+
+      ws.addEventListener("open", () => {
+        // Connection established — nothing to do, server sends "hello"
+      });
 
       ws.addEventListener("message", (ev) => {
         let msg: LiveMessage;
         try {
-          msg = JSON.parse(ev.data) as LiveMessage;
+          msg = JSON.parse(ev.data as string) as LiveMessage;
         } catch {
           return;
         }
 
         if (msg.type === "hello") return;
 
+        // Always refresh data on any event
         invalidateAll();
 
         if (msg.type === "event_created") {
-          toast({
+          toastRef.current({
             title: "Новая заявка",
             description: msg.submittedBy
-              ? `${msg.title} — от ${msg.submittedBy}`
-              : msg.title,
+              ? `«${msg.title}» — от ${msg.submittedBy}`
+              : `«${msg.title}»`,
           });
         }
       });
 
-      ws.addEventListener("close", () => {
-        scheduleReconnect();
+      ws.addEventListener("close", (ev) => {
+        ws = null;
+        // Reconnect unless intentionally destroyed
+        if (!destroyed) {
+          // Back off a bit on repeated failures
+          const delay = ev.wasClean ? 1500 : 3000;
+          scheduleReconnect(delay);
+        }
       });
 
       ws.addEventListener("error", () => {
-        try {
-          ws.close();
-        } catch {
-          /* ignore */
-        }
+        // The "close" event fires right after, so just close to trigger reconnect
+        try { ws?.close(); } catch { /* ignore */ }
       });
-    };
-
-    const scheduleReconnect = () => {
-      if (!isMountedRef.current) return;
-      if (reconnectTimer.current !== null) return;
-      reconnectTimer.current = window.setTimeout(() => {
-        reconnectTimer.current = null;
-        connect();
-      }, 2000);
     };
 
     connect();
 
     return () => {
-      isMountedRef.current = false;
-      if (reconnectTimer.current !== null) {
-        window.clearTimeout(reconnectTimer.current);
-        reconnectTimer.current = null;
+      destroyed = true;
+      if (reconnectTimer !== null) {
+        window.clearTimeout(reconnectTimer);
+        reconnectTimer = null;
       }
-      if (wsRef.current) {
-        try {
-          wsRef.current.close();
-        } catch {
-          /* ignore */
-        }
-        wsRef.current = null;
-      }
+      try { ws?.close(); } catch { /* ignore */ }
+      ws = null;
     };
-  }, [queryClient, toast]);
+  }, []); // empty deps — uses refs for queryClient and toast
 }

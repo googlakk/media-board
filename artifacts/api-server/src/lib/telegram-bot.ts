@@ -4,7 +4,7 @@ import { eq, sql } from "drizzle-orm";
 import { logger } from "./logger";
 import { broadcast } from "./ws";
 
-// ─── Session types ────────────────────────────────────────────────────────────
+// ─── Session types ─────────────────────────────────────────────────────────────
 
 type SessionStep =
   | "awaitingTitle"
@@ -17,8 +17,8 @@ type SessionStep =
 interface Session {
   step: SessionStep;
   title?: string;
-  dateOnly?: Date | null;  // date without time component
-  eventDate?: Date | null; // final date+time
+  dateOnly?: Date | null;
+  eventDate?: Date | null;
   location?: string | null;
   description?: string | null;
   contactInfo?: string | null;
@@ -27,7 +27,7 @@ interface Session {
 
 const sessions = new Map<number, Session>();
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Constants ─────────────────────────────────────────────────────────────────
 
 const SKIP_RE = /^(пропустить|пропуск|skip|нет|—|-|\.|\+)$/i;
 const CANCEL_DATA = "cancel";
@@ -58,33 +58,33 @@ const WEEKDAYS_RU: Record<string, number> = {
   воскресенье: 0, вс: 0, вск: 0,
 };
 
-/** Parse a date-only string into a Date (time set to noon). Returns null if not parseable. */
+// ─── Parsers ───────────────────────────────────────────────────────────────────
+
 function parseDate(input: string): Date | null {
   const s = input.trim().toLowerCase();
   if (!s || SKIP_RE.test(s)) return null;
 
   const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0);
 
-  // Relative keywords
-  if (/^сегодня$/.test(s)) return new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0);
-  if (/^завтра$/.test(s)) { const d = new Date(now); d.setDate(d.getDate() + 1); d.setHours(12, 0, 0, 0); return d; }
-  if (/^послезавтра$/.test(s)) { const d = new Date(now); d.setDate(d.getDate() + 2); d.setHours(12, 0, 0, 0); return d; }
+  if (/^сегодня$/.test(s)) return today;
+  if (/^завтра$/.test(s)) { const d = new Date(today); d.setDate(d.getDate() + 1); return d; }
+  if (/^послезавтра$/.test(s)) { const d = new Date(today); d.setDate(d.getDate() + 2); return d; }
 
   // "в пятницу" / "пятница"
   const wdMatch = s.match(/^(?:в\s+)?(\S+)$/);
   if (wdMatch) {
     const wd = WEEKDAYS_RU[wdMatch[1]];
     if (wd !== undefined) {
-      const d = new Date(now);
+      const d = new Date(today);
       const diff = ((wd - d.getDay()) + 7) % 7 || 7;
       d.setDate(d.getDate() + diff);
-      d.setHours(12, 0, 0, 0);
       return d;
     }
   }
 
   // DD.MM.YYYY / DD.MM.YY / DD.MM / DD/MM/YYYY / DD-MM-YYYY
-  const numSep = s.match(/^(\d{1,2})[.\/-](\d{1,2})(?:[.\/-](\d{2,4}))?$/);
+  const numSep = s.match(/^(\d{1,2})[./\-](\d{1,2})(?:[./\-](\d{2,4}))?$/);
   if (numSep) {
     const [, dd, mm, yyyy] = numSep;
     let year = yyyy ? parseInt(yyyy, 10) : now.getFullYear();
@@ -113,30 +113,40 @@ function parseDate(input: string): Date | null {
     }
   }
 
-  // Fallback: JS Date constructor
-  const fallback = new Date(s);
-  if (!isNaN(fallback.getTime())) { fallback.setHours(12, 0, 0, 0); return fallback; }
-
   return null;
 }
 
-/** Parse time string. Returns [hours, minutes] or null. */
 function parseTime(input: string): [number, number] | null {
   const s = input.trim().toLowerCase();
   if (!s || SKIP_RE.test(s)) return null;
 
-  // HH:MM / HH.MM / HH-MM / HHMM (4 digits)
-  const m = s.match(/^(\d{1,2})[:.\- ]?(\d{2})$/);
+  // HH:MM / HH.MM / HH-MM / HH MM
+  const m = s.match(/^(\d{1,2})[:.\- ](\d{2})$/);
   if (m) {
     const h = parseInt(m[1], 10);
     const min = parseInt(m[2], 10);
     if (h >= 0 && h <= 23 && min >= 0 && min <= 59) return [h, min];
   }
 
-  // "14ч", "14 ч", "14 часов"
-  const hOnly = s.match(/^(\d{1,2})\s*(?:ч|час|часов|h|hr)?$/);
+  // HHMM (4 digits)
+  const m4 = s.match(/^(\d{2})(\d{2})$/);
+  if (m4) {
+    const h = parseInt(m4[1], 10);
+    const min = parseInt(m4[2], 10);
+    if (h >= 0 && h <= 23 && min >= 0 && min <= 59) return [h, min];
+  }
+
+  // "14ч" / "14 ч" / "14 часов" / "14h"
+  const hOnly = s.match(/^(\d{1,2})\s*(?:ч(?:ас(?:ов)?)?|h(?:r)?)$/);
   if (hOnly) {
     const h = parseInt(hOnly[1], 10);
+    if (h >= 0 && h <= 23) return [h, 0];
+  }
+
+  // plain number 0-23
+  const plain = s.match(/^(\d{1,2})$/);
+  if (plain) {
+    const h = parseInt(plain[1], 10);
     if (h >= 0 && h <= 23) return [h, 0];
   }
 
@@ -170,7 +180,7 @@ async function nextPosition(): Promise<number> {
   return (row?.max ?? -1) + 1;
 }
 
-// ─── Keyboard builders ────────────────────────────────────────────────────────
+// ─── Keyboards ─────────────────────────────────────────────────────────────────
 
 function mainMenuKeyboard(): TelegramBot.ReplyKeyboardMarkup {
   return {
@@ -178,10 +188,6 @@ function mainMenuKeyboard(): TelegramBot.ReplyKeyboardMarkup {
     resize_keyboard: true,
     one_time_keyboard: false,
   };
-}
-
-function removeKeyboard(): TelegramBot.ReplyKeyboardRemove {
-  return { remove_keyboard: true };
 }
 
 function skipCancelKeyboard(): TelegramBot.InlineKeyboardMarkup {
@@ -199,29 +205,65 @@ function cancelOnlyKeyboard(): TelegramBot.InlineKeyboardMarkup {
   };
 }
 
-// ─── Main export ──────────────────────────────────────────────────────────────
+// ─── Kill any other polling instance via Telegram API ─────────────────────────
 
-export function startTelegramBot(): void {
+async function clearOtherPolling(token: string): Promise<void> {
+  try {
+    // deleteWebhook with drop_pending_updates forces Telegram to reset getUpdates sessions
+    const url = `https://api.telegram.org/bot${token}/deleteWebhook?drop_pending_updates=true`;
+    await fetch(url);
+    // Give Telegram a moment to settle before we start polling
+    await new Promise((r) => setTimeout(r, 1500));
+    logger.info("Telegram: cleared previous polling sessions");
+  } catch (err) {
+    logger.warn({ err }, "Telegram: could not clear previous polling");
+  }
+}
+
+// ─── Main export ───────────────────────────────────────────────────────────────
+
+export async function startTelegramBot(): Promise<void> {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) {
     logger.warn("TELEGRAM_BOT_TOKEN not set — Telegram bot disabled");
     return;
   }
 
-  const bot = new TelegramBot(token, { polling: true });
+  // Kill any stale polling sessions (production / previous dev restart)
+  await clearOtherPolling(token);
 
-  // Register bot command hints (the "/" menu in Telegram)
+  const bot = new TelegramBot(token, {
+    polling: {
+      autoStart: true,
+      interval: 300,
+      params: { timeout: 10 },
+    },
+  });
+
+  // Register slash-command hints in Telegram's "/" menu
   bot.setMyCommands([
     { command: "new", description: "Подать заявку на съёмку" },
     { command: "cancel", description: "Отменить текущую заявку" },
     { command: "help", description: "Помощь" },
   ]).catch(() => {});
 
+  // Graceful shutdown
+  const stop = () => {
+    bot.stopPolling().catch(() => {});
+  };
+  process.once("SIGTERM", stop);
+  process.once("SIGINT", stop);
+
   bot.on("polling_error", (err) => {
-    logger.error({ err: err.message }, "Telegram polling error");
+    // 409 means another instance took over — back off briefly, it resolves itself
+    if (String(err.message).includes("409")) {
+      logger.warn("Telegram 409: another instance detected, will retry");
+    } else {
+      logger.error({ err: err.message }, "Telegram polling error");
+    }
   });
 
-  // ── /start ────────────────────────────────────────────────────────────────
+  // ── /start ──────────────────────────────────────────────────────────────────
 
   bot.onText(/^\/start/, (msg) => {
     sessions.delete(msg.chat.id);
@@ -232,28 +274,20 @@ export function startTelegramBot(): void {
     );
   });
 
-  // ── /help ─────────────────────────────────────────────────────────────────
-
   bot.onText(/^\/help/, (msg) => {
     bot.sendMessage(
       msg.chat.id,
-      "Нажмите кнопку «Подать заявку на съёмку» или введите /new — я проведу вас по шагам.\n\n/cancel — отменить текущую заявку.",
+      "Нажмите кнопку «Подать заявку на съёмку» или введите /new.\n\n/cancel — отменить текущую заявку.",
       { reply_markup: mainMenuKeyboard() },
     );
   });
-
-  // ── /cancel ───────────────────────────────────────────────────────────────
 
   bot.onText(/^\/cancel/, (msg) => {
     sessions.delete(msg.chat.id);
-    bot.sendMessage(
-      msg.chat.id,
-      "Заявка отменена.",
-      { reply_markup: mainMenuKeyboard() },
-    );
+    bot.sendMessage(msg.chat.id, "Заявка отменена.", { reply_markup: mainMenuKeyboard() });
   });
 
-  // ── Start new flow (/new or button) ──────────────────────────────────────
+  // ── Start flow ──────────────────────────────────────────────────────────────
 
   function startNewFlow(chatId: number, submittedBy: string): void {
     sessions.set(chatId, { step: "awaitingTitle", submittedBy });
@@ -266,12 +300,12 @@ export function startTelegramBot(): void {
 
   bot.onText(/^\/new/, (msg) => startNewFlow(msg.chat.id, whoSubmitted(msg)));
 
-  // ── Callback queries (button taps) ────────────────────────────────────────
+  // ── Callback queries (button taps) ──────────────────────────────────────────
 
   bot.on("callback_query", async (query) => {
     const chatId = query.message?.chat.id;
     if (!chatId) return;
-    await bot.answerCallbackQuery(query.id);
+    await bot.answerCallbackQuery(query.id).catch(() => {});
 
     if (query.data === CANCEL_DATA) {
       sessions.delete(chatId);
@@ -280,44 +314,38 @@ export function startTelegramBot(): void {
     }
 
     if (query.data === SKIP_DATA) {
-      // Synthesise a "пропустить" message for the current step
       const session = sessions.get(chatId);
       if (!session) return;
       await handleStep(chatId, session, "пропустить");
-      return;
     }
   });
 
-  // ── Text messages ─────────────────────────────────────────────────────────
+  // ── Text messages ────────────────────────────────────────────────────────────
 
   bot.on("message", async (msg) => {
     if (!msg.text) return;
     const chatId = msg.chat.id;
     const text = msg.text.trim();
 
-    // Handle the big reply-keyboard button
     if (text === "Подать заявку на съёмку") {
       startNewFlow(chatId, whoSubmitted(msg));
       return;
     }
 
-    // Ignore slash commands (handled above)
     if (text.startsWith("/")) return;
 
     const session = sessions.get(chatId);
     if (!session) {
-      bot.sendMessage(
-        chatId,
-        "Нажмите кнопку ниже, чтобы подать заявку.",
-        { reply_markup: mainMenuKeyboard() },
-      );
+      bot.sendMessage(chatId, "Нажмите кнопку ниже, чтобы подать заявку.", {
+        reply_markup: mainMenuKeyboard(),
+      });
       return;
     }
 
     await handleStep(chatId, session, text);
   });
 
-  // ── Step handler ──────────────────────────────────────────────────────────
+  // ── Step handler ─────────────────────────────────────────────────────────────
 
   async function handleStep(chatId: number, session: Session, text: string): Promise<void> {
     try {
@@ -332,21 +360,21 @@ export function startTelegramBot(): void {
           session.step = "awaitingDate";
           bot.sendMessage(
             chatId,
-            "Шаг 2 из 6 — Дата\n\nКогда состоится мероприятие? Напишите в любом удобном формате:\n• 9 мая\n• 09.05.2026\n• завтра / послезавтра\n• в пятницу\n\nЕсли дата неизвестна — нажмите «Пропустить».",
+            "Шаг 2 из 6 — Дата\n\nКогда состоится мероприятие? Пишите как удобно:\n• 9 мая\n• 09.05.2026\n• завтра / послезавтра\n• в пятницу\n\nЕсли дата неизвестна — нажмите «Пропустить».",
             { reply_markup: skipCancelKeyboard() },
           );
           break;
         }
 
         case "awaitingDate": {
-          const isSkip = SKIP_RE.test(text);
-          if (isSkip) {
+          if (SKIP_RE.test(text)) {
             session.dateOnly = null;
             session.eventDate = null;
+            // Skip time step too
             session.step = "awaitingLocation";
             bot.sendMessage(
               chatId,
-              "Шаг 3 из 6 — Место\n\nГде будет проходить мероприятие?\nНапример: «Актовый зал», «Спортзал», «Школьный двор».\n\nЕсли неизвестно — нажмите «Пропустить».",
+              "Шаг 4 из 6 — Место\n\nГде будет проходить мероприятие?\nНапример: «Актовый зал», «Спортзал», «Школьный двор».\n\nЕсли неизвестно — нажмите «Пропустить».",
               { reply_markup: skipCancelKeyboard() },
             );
           } else {
@@ -354,7 +382,7 @@ export function startTelegramBot(): void {
             if (!d) {
               bot.sendMessage(
                 chatId,
-                "Не могу распознать дату. Попробуйте написать иначе:\n• 9 мая\n• 09.05.2026\n• завтра\n• в пятницу\n\nИли нажмите «Пропустить».",
+                "Не могу распознать дату. Попробуйте:\n• 9 мая\n• 09.05.2026\n• завтра\n• в пятницу\n\nИли нажмите «Пропустить».",
                 { reply_markup: skipCancelKeyboard() },
               );
               return;
@@ -363,7 +391,7 @@ export function startTelegramBot(): void {
             session.step = "awaitingTime";
             bot.sendMessage(
               chatId,
-              `Дата: ${formatDate(d)}\n\nШаг 3 из 6 — Время\n\nВ какое время начнётся? Например: 14:00, 9:30, 15ч.\n\nЕсли время неизвестно — нажмите «Пропустить»`,
+              `Дата: ${formatDate(d)}\n\nШаг 3 из 6 — Время\n\nВ какое время начнётся? Например: 14:00, 9:30, 15ч.\n\nЕсли время неизвестно — нажмите «Пропустить».",`,
               { reply_markup: skipCancelKeyboard() },
             );
           }
@@ -371,8 +399,7 @@ export function startTelegramBot(): void {
         }
 
         case "awaitingTime": {
-          const isSkip = SKIP_RE.test(text);
-          if (isSkip || !session.dateOnly) {
+          if (SKIP_RE.test(text) || !session.dateOnly) {
             session.eventDate = session.dateOnly ?? null;
           } else {
             const t = parseTime(text);
@@ -423,7 +450,7 @@ export function startTelegramBot(): void {
           if (!text || SKIP_RE.test(text) || text.length < 2) {
             bot.sendMessage(
               chatId,
-              "Пожалуйста, напишите ваше имя и контакт — это нужно, чтобы медиа-отдел мог уточнить детали.",
+              "Пожалуйста, напишите ваше имя и контакт — медиа-отдел сможет уточнить детали.",
               { reply_markup: cancelOnlyKeyboard() },
             );
             return;
@@ -451,7 +478,7 @@ export function startTelegramBot(): void {
             type: "event_created",
             eventId: created.id,
             title: created.title,
-            submittedBy: created.submittedBy,
+            submittedBy: created.contactInfo ?? created.submittedBy,
           });
 
           const dateStr = created.eventDate ? formatDateTime(created.eventDate) : "не указана";
@@ -459,7 +486,7 @@ export function startTelegramBot(): void {
           bot.sendMessage(
             chatId,
             `Заявка принята!\n\n` +
-              `Название: ${created.title}\n` +
+              `Мероприятие: ${created.title}\n` +
               `Когда: ${dateStr}\n` +
               `Где: ${created.location ?? "не указано"}\n` +
               `От: ${created.contactInfo}\n\n` +
@@ -474,7 +501,9 @@ export function startTelegramBot(): void {
     } catch (err) {
       logger.error({ err }, "Telegram handler error");
       sessions.delete(chatId);
-      bot.sendMessage(chatId, "Произошла ошибка. Попробуйте ещё раз.", { reply_markup: mainMenuKeyboard() });
+      bot.sendMessage(chatId, "Произошла ошибка. Попробуйте ещё раз.", {
+        reply_markup: mainMenuKeyboard(),
+      });
     }
   }
 

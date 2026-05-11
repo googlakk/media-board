@@ -23,7 +23,9 @@ attachWebSocketServer(server);
 
 server.listen(port, () => {
   logger.info({ port }, "Server listening");
-  startTelegramBot();
+  startTelegramBot().catch((err) => {
+    logger.error({ err }, "Failed to start Telegram bot");
+  });
 });
 
 server.on("error", (err) => {
